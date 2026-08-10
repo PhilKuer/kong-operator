@@ -153,10 +153,35 @@ type PodDisruptionBudgetSpec struct {
 	UnhealthyPodEvictionPolicy *policyv1.UnhealthyPodEvictionPolicyType `json:"unhealthyPodEvictionPolicy,omitempty" protobuf:"bytes,4,opt,name=unhealthyPodEvictionPolicy"`
 }
 
-// DataPlaneDeploymentOptions specifies options for the Deployments (as in the Kubernetes
-// resource "Deployment") which are created and managed for the DataPlane resource.
+// DataPlaneDeploymentOptions specifies options for the workload (a Deployment or
+// a DaemonSet, as in the Kubernetes resources of those names) which is created
+// and managed for the DataPlane resource.
+//
+// +kubebuilder:validation:XValidation:message="replicas is not allowed when workloadType is DaemonSet",rule="!(has(self.workloadType) && self.workloadType == 'DaemonSet' && has(self.replicas))"
+// +kubebuilder:validation:XValidation:message="scaling is not allowed when workloadType is DaemonSet",rule="!(has(self.workloadType) && self.workloadType == 'DaemonSet' && has(self.scaling))"
+// +kubebuilder:validation:XValidation:message="rollout is not allowed when workloadType is DaemonSet",rule="!(has(self.workloadType) && self.workloadType == 'DaemonSet' && has(self.rollout))"
 type DataPlaneDeploymentOptions struct {
 	DeploymentOptions `json:",inline"`
+
+	// WorkloadType selects the Kubernetes workload that runs the DataPlane's Pods.
+	//
+	// `Deployment` (the default) lets the scheduler place the configured number
+	// of replicas anywhere in the cluster.
+	//
+	// `DaemonSet` runs exactly one DataPlane Pod on every eligible node, which is
+	// the prerequisite for using `externalTrafficPolicy: Local` on the fronting
+	// Service to preserve client source IPs without skewing traffic towards the
+	// nodes that happen to host a Pod. Note that the operator does not manage the
+	// `externalTrafficPolicy` of Services it does not own, so that has to be
+	// configured through `spec.network.services.ingress` (or the equivalent
+	// GatewayConfiguration field) separately.
+	//
+	// The `replicas`, `scaling` and `rollout` fields cannot be used with
+	// `DaemonSet` because a DaemonSet's size follows the number of eligible nodes.
+	//
+	// +optional
+	// +kubebuilder:default=Deployment
+	WorkloadType commonv1alpha1.WorkloadType `json:"workloadType,omitempty"`
 
 	// Rollout describes a custom rollout strategy.
 	//

@@ -114,6 +114,48 @@ func filterDeployments(deployments []appsv1.Deployment) []appsv1.Deployment {
 }
 
 // -----------------------------------------------------------------------------
+// Filter functions - DaemonSets
+// -----------------------------------------------------------------------------
+
+// filterDaemonSets filters out the DaemonSet to be kept and returns
+// all the DaemonSets to be deleted.
+//
+// The filtered-out DaemonSet is decided as follows:
+// 1. number of numberAvailable (higher is better)
+// 2. number of numberReady (higher is better)
+// 3. creationTimestamp (older is better).
+func filterDaemonSets(daemonSets []appsv1.DaemonSet) []appsv1.DaemonSet {
+	if len(daemonSets) < 2 {
+		return []appsv1.DaemonSet{}
+	}
+
+	toFilter := 0
+	for i, daemonSet := range daemonSets {
+		// check which DaemonSet has more available Pods
+		if daemonSet.Status.NumberAvailable != daemonSets[toFilter].Status.NumberAvailable {
+			if daemonSet.Status.NumberAvailable > daemonSets[toFilter].Status.NumberAvailable {
+				toFilter = i
+			}
+			continue
+		}
+		// check which DaemonSet has more ready Pods
+		if daemonSet.Status.NumberReady != daemonSets[toFilter].Status.NumberReady {
+			if daemonSet.Status.NumberReady > daemonSets[toFilter].Status.NumberReady {
+				toFilter = i
+			}
+			continue
+		}
+		// check the older DaemonSet
+		if daemonSet.CreationTimestamp.Before(&daemonSets[toFilter].CreationTimestamp) {
+			toFilter = i
+			continue
+		}
+	}
+
+	return append(daemonSets[:toFilter], daemonSets[toFilter+1:]...)
+}
+
+// -----------------------------------------------------------------------------
 // Filter functions - Services
 // -----------------------------------------------------------------------------
 

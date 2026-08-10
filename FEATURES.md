@@ -67,6 +67,30 @@ where the number of `Pods` can be adjusted up and down as needed according to
 > **Warning**: Currently this only affects the `DataPlane` `Pod` scaling. `ControlPlane`
 > `Pod` scaling is a consideration for future releases.
 
+## DataPlane Workload Type: Deployment or DaemonSet
+
+By default a `DataPlane`'s `Pods` are run by a `Deployment`, which lets the
+Kubernetes scheduler place the configured number of replicas anywhere in the
+cluster. Setting `spec.deployment.workloadType: DaemonSet` on a `DataPlane` -
+or `spec.dataPlaneOptions.deployment.workloadType: DaemonSet` on a
+[GatewayConfiguration][gwcfg], so that every `Gateway` using it inherits the
+setting - makes the operator run exactly one `DataPlane` `Pod` per eligible node
+instead.
+
+This is the intended pattern for preserving client source IPs: pairing
+`DaemonSet` with `externalTrafficPolicy: Local` on the fronting `Service`
+(configured through `spec.network.services.ingress.externalTrafficPolicy`)
+means every node has a local `Pod` to receive traffic, so the source IP is
+preserved without the SNAT hop of the `Cluster` policy and without the traffic
+skew that `Local` causes when a `Deployment`'s `Pods` are not on every node.
+The operator does not set `externalTrafficPolicy` implicitly - the two settings
+are configured independently.
+
+The `replicas`, `scaling` and `rollout` fields are rejected in `DaemonSet` mode,
+because a `DaemonSet`'s size follows the number of eligible nodes rather than a
+replica count. Switching the field on an existing `DataPlane` is supported: the
+operator replaces the workload with one of the newly requested type.
+
 ## Kong Hybrid Mode DataPlane
 
 The [Kong Gateway][gw] can be deployed in [hybrid mode][hybr] which allows

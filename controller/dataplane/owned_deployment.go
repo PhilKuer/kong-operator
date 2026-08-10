@@ -110,12 +110,8 @@ func (d *DeploymentBuilder) BuildAndDeploy(
 	enforceConfig bool,
 	validateDataPlaneImage bool,
 ) (*appsv1.Deployment, op.Result, error) {
-	opts := []certificates.CertOpt{}
-	if d.secretLabelSelector != "" {
-		opts = append(opts, certificates.WithSecretLabel(d.secretLabelSelector, "true"))
-	}
-	if err := certificates.CreateKonnectCert(ctx, d.logger, dataplane, d.client, opts...); err != nil {
-		return nil, op.Noop, fmt.Errorf("failed creating konnect cert: %w", err)
+	if err := d.ensureKonnectCert(ctx, dataplane); err != nil {
+		return nil, op.Noop, err
 	}
 
 	// if there is more than one Deployment, delete the extras
@@ -127,35 +123,8 @@ func (d *DeploymentBuilder) BuildAndDeploy(
 		return nil, op.Noop, nil
 	}
 
-	// generate the initial Deployment struct
-	desiredDeployment, err := generateDataPlaneDeployment(
-		d.logger, validateDataPlaneImage, dataplane, d.defaultImage, d.additionalLabels, d.opts...,
-	)
+	desiredDeployment, err := d.buildDesiredDeployment(ctx, dataplane, validateDataPlaneImage)
 	if err != nil {
-		return nil, op.Noop, fmt.Errorf("could not generate Deployment: %w", err)
-	}
-
-	// Add the cluster certificate to the generated Deployment
-	desiredDeployment = setClusterCertVars(desiredDeployment, d.clusterCertificateName)
-
-	if err := certificates.MountAndUseKonnectCert(ctx, d.logger, dataplane, d.client, desiredDeployment); err != nil {
-		return nil, op.Noop, fmt.Errorf("failed to mount konnect cert: %w", err)
-	}
-
-	// TODO https://github.com/kong/kong-operator/issues/128
-	// This is a workaround to avoid patches clobbering the wrong EnvVar. We want to find an improved patch mechanism
-	// that doesn't clobber EnvVars (and other array fields) it shouldn't.
-	existingEnvVars := desiredDeployment.Spec.Template.Spec.Containers[0].Env
-	desiredDeployment.Spec.Template.Spec.Containers[0].Env = []corev1.EnvVar{}
-	// apply user patches and set any default environment variables that aren't already set
-	desiredDeployment, err = applyDeploymentUserPatchesForDataPlane(dataplane, desiredDeployment)
-	if err != nil {
-		return nil, op.Noop, err
-	}
-	// apply default envvars and restore the hacked-out ones
-	desiredDeployment = applyEnvForDataPlane(existingEnvVars, desiredDeployment, config.KongDefaults)
-
-	if err := k8sresources.AnnotateObjWithHash(desiredDeployment.Unwrap(), deploymentRelevantDataPlaneSpec(dataplane)); err != nil {
 		return nil, op.Noop, err
 	}
 
@@ -166,6 +135,64 @@ func (d *DeploymentBuilder) BuildAndDeploy(
 		return nil, op.Noop, err
 	}
 	return deployment, res, nil
+}
+
+// ensureKonnectCert creates the Konnect certificate that the built workload mounts, if needed.
+func (d *DeploymentBuilder) ensureKonnectCert(ctx context.Context, dataplane *operatorv1beta1.DataPlane) error {
+	opts := []certificates.CertOpt{}
+	if d.secretLabelSelector != "" {
+		opts = append(opts, certificates.WithSecretLabel(d.secretLabelSelector, "true"))
+	}
+	if err := certificates.CreateKonnectCert(ctx, d.logger, dataplane, d.client, opts...); err != nil {
+		return fmt.Errorf("failed creating konnect cert: %w", err)
+	}
+	return nil
+}
+
+// buildDesiredDeployment builds the desired DataPlane Deployment: it generates the base
+// Deployment, mounts the certificates, applies the user's PodTemplateSpec patches and the
+// default environment variables and finally annotates it with the DataPlane spec hash.
+//
+// The result is also the base for the DaemonSet workload type (see BuildAndDeployDaemonSet),
+// so that both workload types are built from exactly the same Pod template.
+func (d *DeploymentBuilder) buildDesiredDeployment(
+	ctx context.Context,
+	dataplane *operatorv1beta1.DataPlane,
+	validateDataPlaneImage bool,
+) (*k8sresources.Deployment, error) {
+	// generate the initial Deployment struct
+	desiredDeployment, err := generateDataPlaneDeployment(
+		d.logger, validateDataPlaneImage, dataplane, d.defaultImage, d.additionalLabels, d.opts...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("could not generate Deployment: %w", err)
+	}
+
+	// Add the cluster certificate to the generated Deployment
+	desiredDeployment = setClusterCertVars(desiredDeployment, d.clusterCertificateName)
+
+	if err := certificates.MountAndUseKonnectCert(ctx, d.logger, dataplane, d.client, desiredDeployment); err != nil {
+		return nil, fmt.Errorf("failed to mount konnect cert: %w", err)
+	}
+
+	// TODO https://github.com/kong/kong-operator/issues/128
+	// This is a workaround to avoid patches clobbering the wrong EnvVar. We want to find an improved patch mechanism
+	// that doesn't clobber EnvVars (and other array fields) it shouldn't.
+	existingEnvVars := desiredDeployment.Spec.Template.Spec.Containers[0].Env
+	desiredDeployment.Spec.Template.Spec.Containers[0].Env = []corev1.EnvVar{}
+	// apply user patches and set any default environment variables that aren't already set
+	desiredDeployment, err = applyDeploymentUserPatchesForDataPlane(dataplane, desiredDeployment)
+	if err != nil {
+		return nil, err
+	}
+	// apply default envvars and restore the hacked-out ones
+	desiredDeployment = applyEnvForDataPlane(existingEnvVars, desiredDeployment, config.KongDefaults)
+
+	if err := k8sresources.AnnotateObjWithHash(desiredDeployment.Unwrap(), deploymentRelevantDataPlaneSpec(dataplane)); err != nil {
+		return nil, err
+	}
+
+	return desiredDeployment, nil
 }
 
 // generateDataPlaneDeployment generates the base Deployment for a DataPlane. It determines the image to use and
@@ -376,6 +403,9 @@ func isRecentDeploymentRestart(template *corev1.PodTemplateSpec, logger logr.Log
 func deploymentRelevantDataPlaneSpec(dataplane *operatorv1beta1.DataPlane) operatorv1beta1.DataPlaneSpec {
 	spec := *dataplane.Spec.DeepCopy()
 	spec.Deployment.Scaling = nil
+	// Normalize the workload type so that a DataPlane created before the field existed
+	// hashes the same as one that got the CRD default applied on its next write.
+	spec.Deployment.WorkloadType = dataPlaneWorkloadType(dataplane)
 	return spec
 }
 

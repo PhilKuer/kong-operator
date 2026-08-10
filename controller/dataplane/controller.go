@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	commonv1alpha1 "github.com/kong/kong-operator/v2/api/common/v1alpha1"
 	operatorv1beta1 "github.com/kong/kong-operator/v2/api/gateway-operator/v1beta1"
 	kcfgkonnect "github.com/kong/kong-operator/v2/api/konnect"
 	ctrlconsts "github.com/kong/kong-operator/v2/controller/consts"
@@ -222,15 +223,45 @@ func (r *Reconciler) Reconcile(ctx context.Context, dataplane *operatorv1beta1.D
 		WithAdditionalLabels(deploymentLabels).
 		WithSecretLabelSelector(r.SecretLabelSelector)
 
-	deployment, res, err := deploymentBuilder.BuildAndDeploy(ctx, dataplane, r.EnforceConfig, r.ValidateDataPlaneImage)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("could not build Deployment for DataPlane %s: %w", client.ObjectKeyFromObject(dataplane), err)
-	}
-	if res != op.Noop {
-		return ctrl.Result{}, nil
+	// Get rid of the workload of the type the DataPlane is no longer configured to use, so that
+	// flipping spec.deployment.workloadType doesn't leave both a Deployment and a DaemonSet
+	// serving traffic for this DataPlane.
+	if deleted, err := deleteDataPlaneWorkloadsOfOtherType(ctx, r.Client, logger, dataplane, deploymentLabels); err != nil {
+		return ctrl.Result{}, err
+	} else if deleted {
+		return ctrl.Result{}, nil // the deletion will trigger reconciliation
 	}
 
-	res, _, err = ensureHPAForDataPlane(ctx, r.Client, logger, dataplane, deployment.Name)
+	var workloadName string
+	if dataPlaneWorkloadType(dataplane) == commonv1alpha1.WorkloadTypeDaemonSet {
+		daemonSet, res, err := deploymentBuilder.BuildAndDeployDaemonSet(ctx, dataplane, r.EnforceConfig, r.ValidateDataPlaneImage)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("could not build DaemonSet for DataPlane %s: %w", client.ObjectKeyFromObject(dataplane), err)
+		}
+		if res != op.Noop {
+			return ctrl.Result{}, nil
+		}
+		if daemonSet == nil {
+			// The DaemonSets were reduced, wait for the next reconciliation.
+			return ctrl.Result{}, nil
+		}
+		workloadName = daemonSet.Name
+	} else {
+		deployment, res, err := deploymentBuilder.BuildAndDeploy(ctx, dataplane, r.EnforceConfig, r.ValidateDataPlaneImage)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("could not build Deployment for DataPlane %s: %w", client.ObjectKeyFromObject(dataplane), err)
+		}
+		if res != op.Noop {
+			return ctrl.Result{}, nil
+		}
+		if deployment == nil {
+			// The Deployments were reduced, wait for the next reconciliation.
+			return ctrl.Result{}, nil
+		}
+		workloadName = deployment.Name
+	}
+
+	res, _, err = ensureHPAForDataPlane(ctx, r.Client, logger, dataplane, workloadName)
 	if err != nil {
 		return ctrl.Result{}, err
 	}

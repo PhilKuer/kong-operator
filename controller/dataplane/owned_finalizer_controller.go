@@ -30,7 +30,7 @@ import (
 
 // DataPlaneOwnedResource is a type that represents a Kubernetes resource that is owned by a DataPlane.
 type DataPlaneOwnedResource interface {
-	corev1.Service | appsv1.Deployment | corev1.Secret
+	corev1.Service | appsv1.Deployment | appsv1.DaemonSet | corev1.Secret
 }
 
 // DataPlaneOwnedResourcePointer is a type that represents a pointer to a DataPlaneOwnedResource that
@@ -217,6 +217,13 @@ func requestsForDataPlaneOwnedObjects[T DataPlaneOwnedResource](cl client.Client
 				return nil
 			}
 			return objectsListToRequests(lo.ToSlicePtr(dps))
+		case appsv1.DaemonSet:
+			dss, err := k8sutils.ListDaemonSetsForOwner(ctx, cl, dp.GetNamespace(), dp.GetUID())
+			if err != nil {
+				logger.Error(err, "failed to list daemonsets for dataplane")
+				return nil
+			}
+			return objectsListToRequests(lo.ToSlicePtr(dss))
 		case corev1.Secret:
 			secrets, err := k8sutils.ListSecretsForOwner(ctx, cl, dp.GetUID(), client.InNamespace(dp.GetNamespace()))
 			if err != nil {

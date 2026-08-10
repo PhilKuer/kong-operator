@@ -1074,6 +1074,140 @@ func TestDataplane(t *testing.T) {
 		}.
 			RunWithConfig(t, cfg, scheme)
 	})
+	t.Run("workloadType", func(t *testing.T) {
+		daemonSetDeployment := func(mutate func(*operatorv1beta1.DataPlaneDeploymentOptions)) operatorv1beta1.DataPlaneDeploymentOptions {
+			deployment := *validDataplaneOptions.Deployment.DeepCopy()
+			deployment.WorkloadType = commonv1alpha1.WorkloadTypeDaemonSet
+			if mutate != nil {
+				mutate(&deployment)
+			}
+			return deployment
+		}
+
+		common.TestCasesGroup[*operatorv1beta1.DataPlane]{
+			{
+				Name: "workloadType unset is allowed and defaults to Deployment",
+				TestObject: &operatorv1beta1.DataPlane{
+					ObjectMeta: common.CommonObjectMeta(ns.Name),
+					Spec: operatorv1beta1.DataPlaneSpec{
+						DataPlaneOptions: validDataplaneOptions,
+					},
+				},
+			},
+			{
+				Name: "workloadType DaemonSet is allowed",
+				TestObject: &operatorv1beta1.DataPlane{
+					ObjectMeta: common.CommonObjectMeta(ns.Name),
+					Spec: operatorv1beta1.DataPlaneSpec{
+						DataPlaneOptions: operatorv1beta1.DataPlaneOptions{
+							Deployment: daemonSetDeployment(nil),
+						},
+					},
+				},
+			},
+			{
+				Name: "unknown workloadType is rejected",
+				TestObject: &operatorv1beta1.DataPlane{
+					ObjectMeta: common.CommonObjectMeta(ns.Name),
+					Spec: operatorv1beta1.DataPlaneSpec{
+						DataPlaneOptions: operatorv1beta1.DataPlaneOptions{
+							Deployment: daemonSetDeployment(func(d *operatorv1beta1.DataPlaneDeploymentOptions) {
+								d.WorkloadType = "StatefulSet"
+							}),
+						},
+					},
+				},
+				ExpectedErrorMessage: new("spec.deployment.workloadType: Unsupported value: \"StatefulSet\""),
+			},
+			{
+				Name: "replicas with workloadType DaemonSet is not allowed",
+				TestObject: &operatorv1beta1.DataPlane{
+					ObjectMeta: common.CommonObjectMeta(ns.Name),
+					Spec: operatorv1beta1.DataPlaneSpec{
+						DataPlaneOptions: operatorv1beta1.DataPlaneOptions{
+							Deployment: daemonSetDeployment(func(d *operatorv1beta1.DataPlaneDeploymentOptions) {
+								d.Replicas = new(int32(3))
+							}),
+						},
+					},
+				},
+				ExpectedErrorMessage: new("replicas is not allowed when workloadType is DaemonSet"),
+			},
+			{
+				Name: "scaling with workloadType DaemonSet is not allowed",
+				TestObject: &operatorv1beta1.DataPlane{
+					ObjectMeta: common.CommonObjectMeta(ns.Name),
+					Spec: operatorv1beta1.DataPlaneSpec{
+						DataPlaneOptions: operatorv1beta1.DataPlaneOptions{
+							Deployment: daemonSetDeployment(func(d *operatorv1beta1.DataPlaneDeploymentOptions) {
+								d.Scaling = &operatorv1beta1.Scaling{
+									HorizontalScaling: &operatorv1beta1.HorizontalScaling{
+										MaxReplicas: 3,
+									},
+								}
+							}),
+						},
+					},
+				},
+				ExpectedErrorMessage: new("scaling is not allowed when workloadType is DaemonSet"),
+			},
+			{
+				Name: "rollout with workloadType DaemonSet is not allowed",
+				TestObject: &operatorv1beta1.DataPlane{
+					ObjectMeta: common.CommonObjectMeta(ns.Name),
+					Spec: operatorv1beta1.DataPlaneSpec{
+						DataPlaneOptions: operatorv1beta1.DataPlaneOptions{
+							Deployment: daemonSetDeployment(func(d *operatorv1beta1.DataPlaneDeploymentOptions) {
+								d.Rollout = &operatorv1beta1.Rollout{
+									Strategy: operatorv1beta1.RolloutStrategy{
+										BlueGreen: &operatorv1beta1.BlueGreenStrategy{
+											Promotion: operatorv1beta1.Promotion{
+												Strategy: operatorv1beta1.BreakBeforePromotion,
+											},
+										},
+									},
+								}
+							}),
+						},
+					},
+				},
+				ExpectedErrorMessage: new("rollout is not allowed when workloadType is DaemonSet"),
+			},
+			{
+				Name: "replicas with workloadType Deployment is allowed",
+				TestObject: &operatorv1beta1.DataPlane{
+					ObjectMeta: common.CommonObjectMeta(ns.Name),
+					Spec: operatorv1beta1.DataPlaneSpec{
+						DataPlaneOptions: operatorv1beta1.DataPlaneOptions{
+							Deployment: daemonSetDeployment(func(d *operatorv1beta1.DataPlaneDeploymentOptions) {
+								d.WorkloadType = commonv1alpha1.WorkloadTypeDeployment
+								d.Replicas = new(int32(3))
+							}),
+						},
+					},
+				},
+			},
+			{
+				Name: "switching an existing DataPlane with replicas to DaemonSet is not allowed",
+				TestObject: &operatorv1beta1.DataPlane{
+					ObjectMeta: common.CommonObjectMeta(ns.Name),
+					Spec: operatorv1beta1.DataPlaneSpec{
+						DataPlaneOptions: operatorv1beta1.DataPlaneOptions{
+							Deployment: daemonSetDeployment(func(d *operatorv1beta1.DataPlaneDeploymentOptions) {
+								d.WorkloadType = commonv1alpha1.WorkloadTypeDeployment
+								d.Replicas = new(int32(3))
+							}),
+						},
+					},
+				},
+				Update: func(dp *operatorv1beta1.DataPlane) {
+					dp.Spec.Deployment.WorkloadType = commonv1alpha1.WorkloadTypeDaemonSet
+				},
+				ExpectedUpdateErrorMessage: new("replicas is not allowed when workloadType is DaemonSet"),
+			},
+		}.
+			RunWithConfig(t, cfg, scheme)
+	})
 }
 
 func generatePorts(n int32) []operatorv1beta1.DataPlaneServicePort {

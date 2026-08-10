@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	commonv1alpha1 "github.com/kong/kong-operator/v2/api/common/v1alpha1"
 	operatorv1beta1 "github.com/kong/kong-operator/v2/api/gateway-operator/v1beta1"
 	"github.com/kong/kong-operator/v2/controller/pkg/dataplane"
 	"github.com/kong/kong-operator/v2/controller/pkg/op"
@@ -78,7 +79,11 @@ func ensureHPAForDataPlane(
 		return op.Noop, nil, fmt.Errorf("failed listing HPAs for DataPlane %s/%s: %w", dataplane.Namespace, dataplane.Name, err)
 	}
 
-	if scaling := dataplane.Spec.Deployment.Scaling; scaling == nil || scaling.HorizontalScaling == nil {
+	// A DaemonSet's size follows the number of eligible nodes, so there's nothing to
+	// autoscale: drop any HPA that a previous Deployment workload left behind.
+	scaling := dataplane.Spec.Deployment.Scaling
+	if dataPlaneWorkloadType(dataplane) == commonv1alpha1.WorkloadTypeDaemonSet ||
+		scaling == nil || scaling.HorizontalScaling == nil {
 		if err := k8sreduce.ReduceHPAs(ctx, cl, hpas, k8sreduce.FilterNone); err != nil {
 			return op.Noop, nil, fmt.Errorf("failed reducing HPAs for DataPlane %s/%s: %w", dataplane.Namespace, dataplane.Name, err)
 		}

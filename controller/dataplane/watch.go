@@ -35,6 +35,8 @@ func DataPlaneWatchBuilder(mgr ctrl.Manager, konnectEnabled bool) *builder.Build
 		Owns(&corev1.Service{}).
 		// Watch for changes in Deployments created by the dataplane controller.
 		Owns(&appsv1.Deployment{}).
+		// Watch for changes in DaemonSets created by the dataplane controller.
+		Owns(&appsv1.DaemonSet{}).
 		// Watch for changes in HPA created by the dataplane controller.
 		Owns(&autoscalingv2.HorizontalPodAutoscaler{}).
 		// Watch for changes in PodDisruptionBudgets created by the dataplane controller.

@@ -1,0 +1,35 @@
+apiVersion: gateway-operator.konghq.com/v1beta1
+kind: DataPlane
+metadata:
+  name: dataplane-daemonset
+spec:
+  deployment:
+    # Run one DataPlane Pod per eligible node instead of a Deployment with an
+    # arbitrary number of replicas. Combined with the externalTrafficPolicy
+    # below, this preserves the client source IP without skewing traffic
+    # towards the nodes that happen to host a Pod.
+    workloadType: DaemonSet
+    podTemplateSpec:
+      spec:
+        containers:
+        - name: proxy
+          # renovate: datasource=docker versioning=docker
+          image: kong:3.9
+          env:
+          - name: KONG_LOG_LEVEL
+            value: debug
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "250m"
+            limits:
+              memory: "1024Mi"
+              cpu: "1000m"
+          readinessProbe:
+            initialDelaySeconds: 1
+            periodSeconds: 1
+  network:
+    services:
+      ingress:
+        type: LoadBalancer
+        externalTrafficPolicy: Local

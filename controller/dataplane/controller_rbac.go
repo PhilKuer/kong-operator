@@ -10,6 +10,7 @@ package dataplane
 // +kubebuilder:rbac:groups=gateway-operator.konghq.com,resources=konnectextensions,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=gateway-operator.konghq.com,resources=konnectextensions/status,verbs=update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=create;get;list;watch;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=create;get;list;watch;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services,verbs=create;get;list;watch;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;delete

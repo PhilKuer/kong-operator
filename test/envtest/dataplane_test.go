@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	commonv1alpha1 "github.com/kong/kong-operator/v2/api/common/v1alpha1"
 	kcfgdataplane "github.com/kong/kong-operator/v2/api/gateway-operator/dataplane"
 	operatorv1beta1 "github.com/kong/kong-operator/v2/api/gateway-operator/v1beta1"
 	"github.com/kong/kong-operator/v2/controller/dataplane"
@@ -338,6 +339,79 @@ func TestDataPlane(t *testing.T) {
 			assert.EqualValues(ct, 1, current.Status.Replicas)
 		}, waitTime, tickTime)
 	})
+}
+
+func TestDataPlaneWorkloadTypeDaemonSet(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	cl, ns := setupDataPlaneTest(t, ctx, "cluster-ca-workload-type")
+
+	dp := &operatorv1beta1.DataPlane{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "dp-daemonset",
+			Namespace: ns.Name,
+		},
+		Spec: operatorv1beta1.DataPlaneSpec{
+			DataPlaneOptions: operatorv1beta1.DataPlaneOptions{
+				Deployment: operatorv1beta1.DataPlaneDeploymentOptions{
+					WorkloadType: commonv1alpha1.WorkloadTypeDaemonSet,
+					DeploymentOptions: operatorv1beta1.DeploymentOptions{
+						PodTemplateSpec: &corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{{
+									Name:  consts.DataPlaneProxyContainerName,
+									Image: consts.DefaultDataPlaneImage,
+								}},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, cl.Create(ctx, dp))
+
+	managedByDataPlane := client.MatchingLabels{
+		"app":                                dp.Name,
+		consts.DataPlaneDeploymentStateLabel: consts.DataPlaneStateLabelValueLive,
+	}
+
+	t.Log("a DaemonSet is created for the DataPlane, and no Deployment")
+	var daemonSet appsv1.DaemonSet
+	require.EventuallyWithT(t, func(ct *assert.CollectT) {
+		var daemonSetList appsv1.DaemonSetList
+		require.NoError(ct, cl.List(ctx, &daemonSetList, client.InNamespace(ns.Name), managedByDataPlane))
+		require.Len(ct, daemonSetList.Items, 1)
+		daemonSet = daemonSetList.Items[0]
+
+		var deploymentList appsv1.DeploymentList
+		require.NoError(ct, cl.List(ctx, &deploymentList, client.InNamespace(ns.Name), managedByDataPlane))
+		require.Empty(ct, deploymentList.Items)
+	}, waitTime, tickTime)
+
+	t.Log("the DaemonSet runs the proxy container built from the DataPlane spec")
+	proxyContainer := k8sutils.GetPodContainerByName(&daemonSet.Spec.Template.Spec, consts.DataPlaneProxyContainerName)
+	require.NotNil(t, proxyContainer)
+	assert.Equal(t, consts.DefaultDataPlaneImage, proxyContainer.Image)
+	assert.Equal(t, appsv1.RollingUpdateDaemonSetStrategyType, daemonSet.Spec.UpdateStrategy.Type)
+
+	t.Log("switching the DataPlane back to the Deployment workload type replaces the DaemonSet")
+	require.EventuallyWithT(t, func(ct *assert.CollectT) {
+		require.NoError(ct, cl.Get(ctx, client.ObjectKeyFromObject(dp), dp))
+		dp.Spec.Deployment.WorkloadType = commonv1alpha1.WorkloadTypeDeployment
+		require.NoError(ct, cl.Update(ctx, dp))
+	}, waitTime, tickTime)
+
+	require.EventuallyWithT(t, func(ct *assert.CollectT) {
+		var daemonSetList appsv1.DaemonSetList
+		require.NoError(ct, cl.List(ctx, &daemonSetList, client.InNamespace(ns.Name), managedByDataPlane))
+		require.Empty(ct, daemonSetList.Items)
+
+		var deploymentList appsv1.DeploymentList
+		require.NoError(ct, cl.List(ctx, &deploymentList, client.InNamespace(ns.Name), managedByDataPlane))
+		require.Len(ct, deploymentList.Items, 1)
+	}, waitTime, tickTime)
 }
 
 func setupDataPlaneTest(t *testing.T, ctx context.Context, caSecretName string) (client.Client, *corev1.Namespace) {

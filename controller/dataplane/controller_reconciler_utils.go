@@ -9,7 +9,6 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/google/go-cmp/cmp"
 	"github.com/samber/lo"
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,10 +33,10 @@ import (
 // ensureDataPlaneReadinessStatus ensures the readiness Status fields of DataPlane are set.
 func ensureDataPlaneReadinessStatus(
 	dataplane *operatorv1beta1.DataPlane,
-	dataplaneDeploymentStatus appsv1.DeploymentStatus,
+	workload dataPlaneWorkloadStatus,
 ) {
-	dataplane.Status.Replicas = dataplaneDeploymentStatus.Replicas
-	dataplane.Status.ReadyReplicas = dataplaneDeploymentStatus.ReadyReplicas
+	dataplane.Status.Replicas = workload.Replicas
+	dataplane.Status.ReadyReplicas = workload.ReadyReplicas
 }
 
 func (r *Reconciler) ensureDataPlaneServiceStatus(

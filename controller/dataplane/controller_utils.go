@@ -8,12 +8,14 @@ import (
 	"os"
 
 	"github.com/go-logr/logr"
+	"github.com/samber/lo"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	commonv1alpha1 "github.com/kong/kong-operator/v2/api/common/v1alpha1"
 	kcfgdataplane "github.com/kong/kong-operator/v2/api/gateway-operator/dataplane"
 	operatorv1beta1 "github.com/kong/kong-operator/v2/api/gateway-operator/v1beta1"
 	"github.com/kong/kong-operator/v2/controller/pkg/log"
@@ -198,16 +200,17 @@ func ensureDataPlaneReadyStatus(
 		return ctrl.Result{}, fmt.Errorf("failed getting DataPlane %s/%s: %w", dataplane.Namespace, dataplane.Name, err)
 	}
 
-	deployments, err := listDataPlaneLiveDeployments(ctx, cl, dataplane)
+	workloadKind := dataPlaneWorkloadKind(dataplane)
+	workloads, err := listDataPlaneLiveWorkloads(ctx, cl, dataplane)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed listing deployments for DataPlane %s/%s: %w", dataplane.Namespace, dataplane.Name, err)
+		return ctrl.Result{}, fmt.Errorf("failed listing %ss for DataPlane %s/%s: %w", workloadKind, dataplane.Namespace, dataplane.Name, err)
 	}
 
-	switch len(deployments) {
+	switch len(workloads) {
 	case 0:
-		log.Debug(logger, "Deployment for DataPlane not present yet")
+		log.Debug(logger, fmt.Sprintf("%s for DataPlane not present yet", workloadKind))
 
-		// Set Ready to false for dataplane as the underlying deployment is not ready.
+		// Set Ready to false for dataplane as the underlying workload is not ready.
 		k8sutils.SetCondition(
 			k8sutils.NewConditionWithGeneration(
 				kcfgdataplane.ReadyType,
@@ -218,13 +221,10 @@ func ensureDataPlaneReadyStatus(
 			),
 			dataplane,
 		)
-		ensureDataPlaneReadinessStatus(dataplane, appsv1.DeploymentStatus{
-			Replicas:      0,
-			ReadyReplicas: 0,
-		})
+		ensureDataPlaneReadinessStatus(dataplane, dataPlaneWorkloadStatus{})
 		res, err := patchDataPlaneStatus(ctx, cl, logger, dataplane)
 		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed patching status (Deployment not present) for DataPlane %s/%s: %w", dataplane.Namespace, dataplane.Name, err)
+			return ctrl.Result{}, fmt.Errorf("failed patching status (%s not present) for DataPlane %s/%s: %w", workloadKind, dataplane.Namespace, dataplane.Name, err)
 		}
 		if res {
 			return ctrl.Result{}, nil
@@ -233,28 +233,28 @@ func ensureDataPlaneReadyStatus(
 	case 1: // Expect just 1.
 
 	default: // More than 1.
-		log.Info(logger, "expected only 1 Deployment for DataPlane")
+		log.Info(logger, fmt.Sprintf("expected only 1 %s for DataPlane", workloadKind))
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	deployment := deployments[0]
-	if _, ready := isDeploymentReady(deployment.Status); !ready {
-		log.Debug(logger, "Deployment for DataPlane not ready yet")
+	workload := workloads[0]
+	if !workload.Ready {
+		log.Debug(logger, fmt.Sprintf("%s for DataPlane not ready yet", workloadKind))
 
-		// Set Ready to false for dataplane as the underlying deployment is not ready.
+		// Set Ready to false for dataplane as the underlying workload is not ready.
 		k8sutils.SetCondition(
 			k8sutils.NewConditionWithGeneration(
 				kcfgdataplane.ReadyType,
 				metav1.ConditionFalse,
 				kcfgdataplane.WaitingToBecomeReadyReason,
-				fmt.Sprintf("%s: Deployment %s is not ready yet", kcfgdataplane.WaitingToBecomeReadyMessage, deployment.Name),
+				fmt.Sprintf("%s: %s %s is not ready yet", kcfgdataplane.WaitingToBecomeReadyMessage, workloadKind, workload.Name),
 				generation,
 			),
 			dataplane,
 		)
-		ensureDataPlaneReadinessStatus(dataplane, deployment.Status)
+		ensureDataPlaneReadinessStatus(dataplane, workload)
 		if _, err := patchDataPlaneStatus(ctx, cl, logger, dataplane); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed patching status (Deployment not ready) for DataPlane %s/%s: %w", dataplane.Namespace, dataplane.Name, err)
+			return ctrl.Result{}, fmt.Errorf("failed patching status (%s not ready) for DataPlane %s/%s: %w", workloadKind, dataplane.Namespace, dataplane.Name, err)
 		}
 		return ctrl.Result{}, nil
 	}
@@ -279,7 +279,7 @@ func ensureDataPlaneReadyStatus(
 			),
 			dataplane,
 		)
-		ensureDataPlaneReadinessStatus(dataplane, deployment.Status)
+		ensureDataPlaneReadinessStatus(dataplane, workload)
 		_, err := patchDataPlaneStatus(ctx, cl, logger, dataplane)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed patching status (ingress Service not present) for DataPlane %s/%s: %w", dataplane.Namespace, dataplane.Name, err)
@@ -308,7 +308,7 @@ func ensureDataPlaneReadyStatus(
 			),
 			dataplane,
 		)
-		ensureDataPlaneReadinessStatus(dataplane, deployment.Status)
+		ensureDataPlaneReadinessStatus(dataplane, workload)
 		_, err := patchDataPlaneStatus(ctx, cl, logger, dataplane)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed patching status (ingress Service not ready) for DataPlane %s/%s: %w", dataplane.Namespace, dataplane.Name, err)
@@ -317,7 +317,7 @@ func ensureDataPlaneReadyStatus(
 	}
 
 	k8sutils.SetReadyWithGeneration(dataplane, generation)
-	ensureDataPlaneReadinessStatus(dataplane, deployment.Status)
+	ensureDataPlaneReadinessStatus(dataplane, workload)
 
 	if _, err := patchDataPlaneStatus(ctx, cl, logger, dataplane); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed patching status for DataPlane %s/%s: %w", dataplane.Namespace, dataplane.Name, err)
@@ -326,20 +326,69 @@ func ensureDataPlaneReadyStatus(
 	return ctrl.Result{}, nil
 }
 
-func listDataPlaneLiveDeployments(
+// dataPlaneWorkloadStatus is the workload-type agnostic view of the readiness of the
+// workload (a Deployment or a DaemonSet) that runs a DataPlane's Pods.
+type dataPlaneWorkloadStatus struct {
+	// Name is the name of the workload object.
+	Name string
+	// Replicas is the number of Pods the workload wants to run: a Deployment's
+	// status.replicas, or a DaemonSet's status.desiredNumberScheduled.
+	Replicas int32
+	// ReadyReplicas is how many of those Pods are ready: a Deployment's
+	// status.readyReplicas, or a DaemonSet's status.numberReady.
+	ReadyReplicas int32
+	// Ready reports whether all the Pods the workload wants to run are available.
+	// It does not indicate that a rollout has completed: a workload can be ready
+	// (all of its Pods are available) while a new spec is still rolling out.
+	Ready bool
+}
+
+// dataPlaneWorkloadKind returns the Kubernetes kind of the workload running the
+// DataPlane's Pods, for use in log and condition messages.
+func dataPlaneWorkloadKind(dataplane *operatorv1beta1.DataPlane) string {
+	return string(dataPlaneWorkloadType(dataplane))
+}
+
+// listDataPlaneLiveWorkloads lists the live workloads running the DataPlane's Pods,
+// reading either Deployments or DaemonSets depending on the configured workload type.
+func listDataPlaneLiveWorkloads(
 	ctx context.Context,
 	cl client.Client,
 	dataplane *operatorv1beta1.DataPlane,
-) ([]appsv1.Deployment, error) {
-	return k8sutils.ListDeploymentsForOwner(ctx,
-		cl,
-		dataplane.Namespace,
-		dataplane.UID,
-		client.MatchingLabels{
-			"app":                                dataplane.Name,
-			consts.DataPlaneDeploymentStateLabel: consts.DataPlaneStateLabelValueLive,
-		},
-	)
+) ([]dataPlaneWorkloadStatus, error) {
+	matchingLabels := client.MatchingLabels{
+		"app":                                dataplane.Name,
+		consts.DataPlaneDeploymentStateLabel: consts.DataPlaneStateLabelValueLive,
+	}
+
+	if dataPlaneWorkloadType(dataplane) == commonv1alpha1.WorkloadTypeDaemonSet {
+		daemonSets, err := k8sutils.ListDaemonSetsForOwner(ctx, cl, dataplane.Namespace, dataplane.UID, matchingLabels)
+		if err != nil {
+			return nil, err
+		}
+		return lo.Map(daemonSets, func(ds appsv1.DaemonSet, _ int) dataPlaneWorkloadStatus {
+			return dataPlaneWorkloadStatus{
+				Name:          ds.Name,
+				Replicas:      ds.Status.DesiredNumberScheduled,
+				ReadyReplicas: ds.Status.NumberReady,
+				Ready:         isDaemonSetReady(ds.Status),
+			}
+		}), nil
+	}
+
+	deployments, err := k8sutils.ListDeploymentsForOwner(ctx, cl, dataplane.Namespace, dataplane.UID, matchingLabels)
+	if err != nil {
+		return nil, err
+	}
+	return lo.Map(deployments, func(d appsv1.Deployment, _ int) dataPlaneWorkloadStatus {
+		_, ready := isDeploymentReady(d.Status)
+		return dataPlaneWorkloadStatus{
+			Name:          d.Name,
+			Replicas:      d.Status.Replicas,
+			ReadyReplicas: d.Status.ReadyReplicas,
+			Ready:         ready,
+		}
+	}), nil
 }
 
 func listDataPlaneLiveServices(
@@ -373,4 +422,13 @@ func isDeploymentReady(deploymentStatus appsv1.DeploymentStatus) (metav1.Conditi
 	}
 
 	return metav1.ConditionTrue, true
+}
+
+// isDaemonSetReady reports whether the DataPlane's DaemonSet is ready, i.e. whether
+// every node that should run a DataPlane Pod has an available one.
+// Mirroring isDeploymentReady, a DaemonSet that doesn't want to schedule anything
+// (no eligible node) is not considered ready, as it serves no traffic.
+func isDaemonSetReady(daemonSetStatus appsv1.DaemonSetStatus) bool {
+	return daemonSetStatus.DesiredNumberScheduled > 0 &&
+		daemonSetStatus.NumberAvailable >= daemonSetStatus.DesiredNumberScheduled
 }

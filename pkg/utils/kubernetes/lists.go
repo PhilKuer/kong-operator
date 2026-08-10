@@ -48,6 +48,40 @@ func ListDeploymentsForOwner(
 	return deployments, nil
 }
 
+// ListDaemonSetsForOwner which gets a list of DaemonSets using the provided
+// list options and reduce by OwnerReference UID and namespace to efficiently
+// list only the objects owned by the provided UID.
+func ListDaemonSetsForOwner(
+	ctx context.Context,
+	c client.Client,
+	namespace string,
+	uid types.UID,
+	listOpts ...client.ListOption,
+) ([]appsv1.DaemonSet, error) {
+	daemonSetList := &appsv1.DaemonSetList{}
+
+	err := c.List(
+		ctx,
+		daemonSetList,
+		append(
+			[]client.ListOption{client.InNamespace(namespace)},
+			listOpts...,
+		)...,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	daemonSets := make([]appsv1.DaemonSet, 0)
+	for _, daemonSet := range daemonSetList.Items {
+		if IsOwnedByRefUID(&daemonSet, uid) {
+			daemonSets = append(daemonSets, daemonSet)
+		}
+	}
+
+	return daemonSets, nil
+}
+
 // ListHPAsForOwner is a helper function which gets a list of HorizontalPodAutoscalers
 // using the provided list options and reduce by OwnerReference UID and namespace to efficiently
 // list only the objects owned by the provided UID.

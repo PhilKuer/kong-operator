@@ -757,4 +757,70 @@ func TestGatewayConfigurationV2(t *testing.T) {
 		}.
 			RunWithConfig(t, cfg, scheme)
 	})
+
+	t.Run("dataplane workloadType", func(t *testing.T) {
+		gatewayConfigWithDeployment := func(deployment operatorv2beta1.DataPlaneDeploymentOptions) *operatorv2beta1.GatewayConfiguration {
+			return &operatorv2beta1.GatewayConfiguration{
+				ObjectMeta: common.CommonObjectMeta(ns.Name),
+				Spec: operatorv2beta1.GatewayConfigurationSpec{
+					DataPlaneOptions: &operatorv2beta1.GatewayConfigDataPlaneOptions{
+						Deployment: deployment,
+					},
+				},
+			}
+		}
+
+		common.TestCasesGroup[*operatorv2beta1.GatewayConfiguration]{
+			{
+				Name: "dataPlaneOptions workloadType DaemonSet is allowed",
+				TestObject: gatewayConfigWithDeployment(operatorv2beta1.DataPlaneDeploymentOptions{
+					WorkloadType: commonv1alpha1.WorkloadTypeDaemonSet,
+				}),
+			},
+			{
+				Name: "unknown dataPlaneOptions workloadType is rejected",
+				TestObject: gatewayConfigWithDeployment(operatorv2beta1.DataPlaneDeploymentOptions{
+					WorkloadType: "StatefulSet",
+				}),
+				ExpectedErrorMessage: new("spec.dataPlaneOptions.deployment.workloadType: Unsupported value: \"StatefulSet\""),
+			},
+			{
+				Name: "dataPlaneOptions replicas with workloadType DaemonSet is not allowed",
+				TestObject: gatewayConfigWithDeployment(operatorv2beta1.DataPlaneDeploymentOptions{
+					WorkloadType: commonv1alpha1.WorkloadTypeDaemonSet,
+					DeploymentOptions: operatorv2beta1.DeploymentOptions{
+						Replicas: new(int32(3)),
+					},
+				}),
+				ExpectedErrorMessage: new("replicas is not allowed when workloadType is DaemonSet"),
+			},
+			{
+				Name: "dataPlaneOptions scaling with workloadType DaemonSet is not allowed",
+				TestObject: gatewayConfigWithDeployment(operatorv2beta1.DataPlaneDeploymentOptions{
+					WorkloadType: commonv1alpha1.WorkloadTypeDaemonSet,
+					DeploymentOptions: operatorv2beta1.DeploymentOptions{
+						Scaling: &operatorv2beta1.Scaling{
+							HorizontalScaling: &operatorv2beta1.HorizontalScaling{
+								MaxReplicas: 3,
+							},
+						},
+					},
+				}),
+				ExpectedErrorMessage: new("scaling is not allowed when workloadType is DaemonSet"),
+			},
+			{
+				Name: "dataPlaneOptions rollout with workloadType DaemonSet is not allowed",
+				TestObject: gatewayConfigWithDeployment(operatorv2beta1.DataPlaneDeploymentOptions{
+					WorkloadType: commonv1alpha1.WorkloadTypeDaemonSet,
+					Rollout: &operatorv2beta1.Rollout{
+						Strategy: operatorv2beta1.RolloutStrategy{
+							BlueGreen: operatorv2beta1.BlueGreenStrategy{},
+						},
+					},
+				}),
+				ExpectedErrorMessage: new("rollout is not allowed when workloadType is DaemonSet"),
+			},
+		}.
+			RunWithConfig(t, cfg, scheme)
+	})
 }

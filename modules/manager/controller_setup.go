@@ -743,6 +743,15 @@ func SetupControllers(mgr manager.Manager, c *Config, cpsMgr *multiinstance.Mana
 				ctrlOpts,
 			),
 		},
+		// DataPlaneOwnedDaemonSetFinalizer controller
+		{
+			Enabled: c.DataPlaneControllerEnabled || c.DataPlaneBlueGreenControllerEnabled,
+			Controller: dataplane.NewDataPlaneOwnedResourceFinalizerReconciler[appsv1.DaemonSet](
+				mgr.GetClient(),
+				c.LoggingMode,
+				ctrlOpts,
+			),
+		},
 		// SecretCert controller
 		{
 			Enabled: c.DataPlaneControllerEnabled || c.DataPlaneBlueGreenControllerEnabled || c.ControlPlaneControllerEnabled,

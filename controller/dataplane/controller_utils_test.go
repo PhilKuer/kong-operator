@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	commonv1alpha1 "github.com/kong/kong-operator/v2/api/common/v1alpha1"
 	kcfgdataplane "github.com/kong/kong-operator/v2/api/gateway-operator/dataplane"
 	operatorv1beta1 "github.com/kong/kong-operator/v2/api/gateway-operator/v1beta1"
 	"github.com/kong/kong-operator/v2/pkg/consts"
@@ -370,6 +371,245 @@ func TestEnsureDataPlaneReadyStatus(t *testing.T) {
 				ReadyReplicas: 1,
 			},
 		},
+		{
+			name: "DaemonSet workload with a Pod missing on one node is not ready",
+			dataPlane: &operatorv1beta1.DataPlane{
+				ObjectMeta: metav1.ObjectMeta{
+					UID:        "test-uid",
+					Name:       "test",
+					Namespace:  "default",
+					Generation: 102,
+				},
+				Spec: operatorv1beta1.DataPlaneSpec{
+					DataPlaneOptions: operatorv1beta1.DataPlaneOptions{
+						Deployment: operatorv1beta1.DataPlaneDeploymentOptions{
+							WorkloadType: commonv1alpha1.WorkloadTypeDaemonSet,
+							DeploymentOptions: operatorv1beta1.DeploymentOptions{
+								PodTemplateSpec: &corev1.PodTemplateSpec{
+									Spec: corev1.PodSpec{
+										Containers: []corev1.Container{
+											{
+												Name:  consts.DataPlaneProxyContainerName,
+												Image: consts.DefaultDataPlaneImage,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			objectLists: []client.ObjectList{
+				&appsv1.DaemonSetList{
+					TypeMeta: metav1.TypeMeta{
+						Kind:       "DaemonSetList",
+						APIVersion: "apps/v1",
+					},
+					Items: []appsv1.DaemonSet{
+						daemonSetForDataPlane("dataplane-daemonset-1", appsv1.DaemonSetStatus{
+							DesiredNumberScheduled: 3,
+							NumberReady:            2,
+							NumberAvailable:        2,
+						}),
+					},
+				},
+			},
+			expectedError:  false,
+			expectedResult: ctrl.Result{},
+			expectedDataPlaneStatus: operatorv1beta1.DataPlaneStatus{
+				Conditions: []metav1.Condition{
+					k8sutils.NewConditionWithGeneration(
+						kcfgdataplane.ReadyType,
+						metav1.ConditionFalse,
+						kcfgdataplane.WaitingToBecomeReadyReason,
+						fmt.Sprintf("%s: DaemonSet %s is not ready yet", kcfgdataplane.WaitingToBecomeReadyMessage, "dataplane-daemonset-1"),
+						102,
+					),
+				},
+				Replicas:      3,
+				ReadyReplicas: 2,
+			},
+		},
+		{
+			name: "DaemonSet workload with a Pod on every node and a ready ingress Service is ready",
+			dataPlane: &operatorv1beta1.DataPlane{
+				ObjectMeta: metav1.ObjectMeta{
+					UID:        "test-uid",
+					Name:       "test",
+					Namespace:  "default",
+					Generation: 102,
+				},
+				Spec: operatorv1beta1.DataPlaneSpec{
+					DataPlaneOptions: operatorv1beta1.DataPlaneOptions{
+						Network: operatorv1beta1.DataPlaneNetworkOptions{
+							Services: &operatorv1beta1.DataPlaneServices{
+								Ingress: &operatorv1beta1.DataPlaneServiceOptions{
+									ServiceOptions: operatorv1beta1.ServiceOptions{
+										Type:                  corev1.ServiceTypeLoadBalancer,
+										ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
+									},
+								},
+							},
+						},
+						Deployment: operatorv1beta1.DataPlaneDeploymentOptions{
+							WorkloadType: commonv1alpha1.WorkloadTypeDaemonSet,
+							DeploymentOptions: operatorv1beta1.DeploymentOptions{
+								PodTemplateSpec: &corev1.PodTemplateSpec{
+									Spec: corev1.PodSpec{
+										Containers: []corev1.Container{
+											{
+												Name:  consts.DataPlaneProxyContainerName,
+												Image: consts.DefaultDataPlaneImage,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			objectLists: []client.ObjectList{
+				&appsv1.DaemonSetList{
+					TypeMeta: metav1.TypeMeta{
+						Kind:       "DaemonSetList",
+						APIVersion: "apps/v1",
+					},
+					Items: []appsv1.DaemonSet{
+						daemonSetForDataPlane("dataplane-daemonset-1", appsv1.DaemonSetStatus{
+							DesiredNumberScheduled: 3,
+							NumberReady:            3,
+							NumberAvailable:        3,
+						}),
+					},
+				},
+				&corev1.ServiceList{
+					TypeMeta: metav1.TypeMeta{
+						Kind:       "ServiceList",
+						APIVersion: "v1",
+					},
+					Items: []corev1.Service{
+						{
+							TypeMeta: metav1.TypeMeta{
+								Kind:       "Service",
+								APIVersion: "v1",
+							},
+							ObjectMeta: metav1.ObjectMeta{
+								Name:      "dataplane-service-1",
+								Namespace: "default",
+								Labels: map[string]string{
+									"app":                             "test",
+									consts.DataPlaneServiceStateLabel: consts.DataPlaneStateLabelValueLive,
+									consts.DataPlaneServiceTypeLabel:  string(consts.DataPlaneIngressServiceLabelValue),
+								},
+								OwnerReferences: []metav1.OwnerReference{
+									{
+										APIVersion: "gateway-operator.konghq.com/v1beta1",
+										Kind:       "DataPlane",
+										UID:        "test-uid",
+									},
+								},
+							},
+							Spec: corev1.ServiceSpec{
+								Type: corev1.ServiceTypeLoadBalancer,
+							},
+							Status: corev1.ServiceStatus{
+								LoadBalancer: corev1.LoadBalancerStatus{
+									Ingress: []corev1.LoadBalancerIngress{
+										{
+											IP: "3.3.3.3",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedError:  false,
+			expectedResult: ctrl.Result{},
+			expectedDataPlaneStatus: operatorv1beta1.DataPlaneStatus{
+				Conditions: []metav1.Condition{
+					k8sutils.NewConditionWithGeneration(
+						kcfgdataplane.ReadyType,
+						metav1.ConditionTrue,
+						"Ready",
+						"",
+						102,
+					),
+				},
+				Replicas:      3,
+				ReadyReplicas: 3,
+			},
+		},
+		{
+			name: "DaemonSet workload is not ready when the operator's Deployments are the only workloads present",
+			dataPlane: &operatorv1beta1.DataPlane{
+				ObjectMeta: metav1.ObjectMeta{
+					UID:        "test-uid",
+					Name:       "test",
+					Namespace:  "default",
+					Generation: 102,
+				},
+				Spec: operatorv1beta1.DataPlaneSpec{
+					DataPlaneOptions: operatorv1beta1.DataPlaneOptions{
+						Deployment: operatorv1beta1.DataPlaneDeploymentOptions{
+							WorkloadType: commonv1alpha1.WorkloadTypeDaemonSet,
+						},
+					},
+				},
+			},
+			objectLists: []client.ObjectList{
+				&appsv1.DeploymentList{
+					TypeMeta: metav1.TypeMeta{
+						Kind:       "DeploymentList",
+						APIVersion: "apps/v1",
+					},
+					Items: []appsv1.Deployment{
+						{
+							TypeMeta: metav1.TypeMeta{
+								Kind:       "Deployment",
+								APIVersion: "apps/v1",
+							},
+							ObjectMeta: metav1.ObjectMeta{
+								Name:      "dataplane-deployment-1",
+								Namespace: "default",
+								Labels: map[string]string{
+									"app":                                "test",
+									consts.DataPlaneDeploymentStateLabel: consts.DataPlaneStateLabelValueLive,
+								},
+								OwnerReferences: []metav1.OwnerReference{
+									{
+										APIVersion: "gateway-operator.konghq.com/v1beta1",
+										Kind:       "DataPlane",
+										UID:        "test-uid",
+									},
+								},
+							},
+							Status: appsv1.DeploymentStatus{
+								Replicas:          1,
+								ReadyReplicas:     1,
+								AvailableReplicas: 1,
+							},
+						},
+					},
+				},
+			},
+			expectedError:  false,
+			expectedResult: ctrl.Result{},
+			expectedDataPlaneStatus: operatorv1beta1.DataPlaneStatus{
+				Conditions: []metav1.Condition{
+					k8sutils.NewConditionWithGeneration(
+						kcfgdataplane.ReadyType,
+						metav1.ConditionFalse,
+						kcfgdataplane.WaitingToBecomeReadyReason,
+						kcfgdataplane.WaitingToBecomeReadyMessage,
+						102,
+					),
+				},
+			},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -408,6 +648,33 @@ func TestEnsureDataPlaneReadyStatus(t *testing.T) {
 				assert.FailNowf(t, "unexpected DataPlane status", "got :\n%#v\ndiff:\n%s\n", tc.dataPlane.Status, d)
 			}
 		})
+	}
+}
+
+// daemonSetForDataPlane returns a DaemonSet that looks like one the operator owns
+// for the "test" DataPlane used across these test cases.
+func daemonSetForDataPlane(name string, status appsv1.DaemonSetStatus) appsv1.DaemonSet {
+	return appsv1.DaemonSet{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "DaemonSet",
+			APIVersion: "apps/v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+			Labels: map[string]string{
+				"app":                                "test",
+				consts.DataPlaneDeploymentStateLabel: consts.DataPlaneStateLabelValueLive,
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion: "gateway-operator.konghq.com/v1beta1",
+					Kind:       "DataPlane",
+					UID:        "test-uid",
+				},
+			},
+		},
+		Status: status,
 	}
 }
 

@@ -61,6 +61,25 @@ func ReduceDeployments(ctx context.Context, k8sClient client.Client, deployments
 	return nil
 }
 
+// +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=delete
+
+// ReduceDaemonSets detects the best DaemonSet in the set and deletes all the others.
+// It accepts optional preDeleteHooks which are executed before every DaemonSet delete operation.
+func ReduceDaemonSets(ctx context.Context, k8sClient client.Client, daemonSets []appsv1.DaemonSet, preDeleteHooks ...PreDeleteHook) error {
+	filteredDaemonSets := filterDaemonSets(daemonSets)
+	for _, daemonSet := range filteredDaemonSets {
+		for _, hook := range preDeleteHooks {
+			if err := hook(ctx, k8sClient, &daemonSet); err != nil {
+				return fmt.Errorf("failed to execute pre delete hook: %w", err)
+			}
+		}
+		if err := k8sClient.Delete(ctx, &daemonSet); client.IgnoreNotFound(err) != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // +kubebuilder:rbac:groups="discovery.k8s.io",resources=endpointslices,verbs=list;watch
 // +kubebuilder:rbac:groups=core,resources=services,verbs=delete
 
