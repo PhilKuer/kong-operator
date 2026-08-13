@@ -4,10 +4,8 @@ metadata:
   name: dataplane-daemonset
 spec:
   deployment:
-    # Run one DataPlane Pod per eligible node instead of a Deployment with an
-    # arbitrary number of replicas. Combined with the externalTrafficPolicy
-    # below, this preserves the client source IP without skewing traffic
-    # towards the nodes that happen to host a Pod.
+    # Run one DataPlane Pod per eligible node instead of a Deployment with a
+    # fixed number of replicas.
     workloadType: DaemonSet
     podTemplateSpec:
       spec:

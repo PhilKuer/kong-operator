@@ -41484,16 +41484,8 @@ spec:
                     description: |-
                       WorkloadType selects the Kubernetes workload that runs the DataPlane's Pods.
 
-                      `Deployment` (the default) lets the scheduler place the configured number
-                      of replicas anywhere in the cluster.
-
-                      `DaemonSet` runs exactly one DataPlane Pod on every eligible node, which is
-                      the prerequisite for using `externalTrafficPolicy: Local` on the fronting
-                      Service to preserve client source IPs without skewing traffic towards the
-                      nodes that happen to host a Pod. Note that the operator does not manage the
-                      `externalTrafficPolicy` of Services it does not own, so that has to be
-                      configured through `spec.network.services.ingress` (or the equivalent
-                      GatewayConfiguration field) separately.
+                      `Deployment` (the default) runs the configured number of replicas.
+                      `DaemonSet` runs exactly one DataPlane Pod on every eligible node.
 
                       The `replicas`, `scaling` and `rollout` fields cannot be used with
                       `DaemonSet` because a DaemonSet's size follows the number of eligible nodes.
@@ -91351,16 +91343,8 @@ spec:
                         description: |-
                           WorkloadType selects the Kubernetes workload that runs the DataPlane's Pods.
 
-                          `Deployment` (the default) lets the scheduler place the configured number
-                          of replicas anywhere in the cluster.
-
-                          `DaemonSet` runs exactly one DataPlane Pod on every eligible node, which is
-                          the prerequisite for using `externalTrafficPolicy: Local` on the fronting
-                          Service to preserve client source IPs without skewing traffic towards the
-                          nodes that happen to host a Pod. Note that the operator does not manage the
-                          `externalTrafficPolicy` of Services it does not own, so that has to be
-                          configured through `spec.network.services.ingress` (or the equivalent
-                          GatewayConfiguration field) separately.
+                          `Deployment` (the default) runs the configured number of replicas.
+                          `DaemonSet` runs exactly one DataPlane Pod on every eligible node.
 
                           The `replicas`, `scaling` and `rollout` fields cannot be used with
                           `DaemonSet` because a DaemonSet's size follows the number of eligible nodes.
@@ -100980,15 +100964,8 @@ spec:
                         description: |-
                           WorkloadType selects the Kubernetes workload that runs the DataPlane's Pods.
 
-                          `Deployment` (the default) lets the scheduler place the configured number
-                          of replicas anywhere in the cluster.
-
-                          `DaemonSet` runs exactly one DataPlane Pod on every eligible node, which is
-                          the prerequisite for using `externalTrafficPolicy: Local` on the fronting
-                          Service to preserve client source IPs without skewing traffic towards the
-                          nodes that happen to host a Pod. The `externalTrafficPolicy` itself is
-                          configured through `network.services.ingress` and is not implied by this
-                          field.
+                          `Deployment` (the default) runs the configured number of replicas.
+                          `DaemonSet` runs exactly one DataPlane Pod on every eligible node.
 
                           The `replicas`, `scaling` and `rollout` fields cannot be used with
                           `DaemonSet` because a DaemonSet's size follows the number of eligible nodes.

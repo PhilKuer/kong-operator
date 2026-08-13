@@ -81,15 +81,11 @@
   [#5211](https://github.com/Kong/kong-operator/pull/5211)
 - `DataPlane`: added `spec.deployment.workloadType`, which selects the Kubernetes
   workload running the DataPlane's Pods. It defaults to `Deployment`, preserving
-  the existing behavior; setting it to `DaemonSet` makes the operator run exactly
-  one DataPlane Pod per eligible node instead. That is the prerequisite for using
-  `externalTrafficPolicy: Local` on the ingress Service to preserve client source
-  IPs without skewing traffic towards the nodes that happen to host a Pod - the
-  policy itself is still configured through
-  `spec.network.services.ingress.externalTrafficPolicy`. `replicas`, `scaling` and
-  `rollout` are rejected in `DaemonSet` mode, since a DaemonSet's size follows the
-  number of eligible nodes. The same field is available on `GatewayConfiguration`
-  as `spec.dataPlaneOptions.deployment.workloadType`, so every `Gateway` using that
+  the existing behavior; setting it to `DaemonSet` runs exactly one DataPlane Pod
+  per eligible node instead. `replicas`, `scaling` and `rollout` are rejected in
+  `DaemonSet` mode, since a DaemonSet's size follows the number of eligible nodes.
+  The same field is available on `GatewayConfiguration` as
+  `spec.dataPlaneOptions.deployment.workloadType`, so every `Gateway` using that
   configuration inherits it.
   [#5107](https://github.com/Kong/kong-operator/issues/5107)
 
